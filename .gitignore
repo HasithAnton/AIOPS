@@ -30,6 +30,7 @@ emulation/mininet_telemetry*.csv
 *.pth
 *.pt
 *.h5
+data/models/
 emulation/mininet_models/
 
 # ── Results / scratch ─────────────────────────────────
