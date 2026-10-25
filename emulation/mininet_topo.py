@@ -173,20 +173,54 @@ class TelemetryCollector(threading.Thread):
         self._csv_header_written = False
 
     def _probe_loop(self):
-        """Runs continuous ping probes in background — non-blocking on collector."""
+        """Runs continuous iperf3 UDP probes on dedicated port 5202.
+
+        A *separate* iperf3 server runs on port 5202 (started in run_emulation
+        alongside the background TCP server on port 5201). This avoids the
+        classic 'server busy' error that occurs when the UDP probe tries to
+        connect to a server already occupied by background TCP traffic.
+
+        Error JSON handling: if iperf3 returns {"error": ...} we treat that
+        as 100% loss (link down or server unavailable) rather than defaulting
+        to the initial 0.0 value.
+        """
+        import json as _json
         while self.running:
             try:
-                result = self.probe_host.cmd(
-                    f'ping -c 5 -W 1 -q {self.probe_target_ip}')
-                for line in result.split('\n'):
-                    if 'rtt' in line and 'avg' in line:
-                        avg_ms = float(line.split('/')[4])
-                        self._latest_latency_ms = avg_ms
-                    if '% packet loss' in line:
-                        pct = float(line.split('%')[0].split()[-1])
-                        self._latest_packet_loss = pct / 100.0
+                raw = self.probe_host.cmd(
+                    f'iperf3 -c {self.probe_target_ip} -u -t 2 -b 500K '
+                    f'--json -p 5202 2>/dev/null')
+                # Extract JSON block (ignore stray output before/after)
+                start = raw.find('{')
+                end   = raw.rfind('}') + 1
+                if start >= 0 and end > start:
+                    data = _json.loads(raw[start:end])
+
+                    # iperf3 returns {"error": "..."} when server is busy
+                    # or unreachable — treat as 100% loss
+                    if 'error' in data:
+                        self._latest_packet_loss = 1.0
+                    else:
+                        end_data = data.get('end', {})
+                        udp_sum  = end_data.get('sum', {})
+
+                        if not udp_sum:
+                            # No sum section = test didn't complete = link issue
+                            self._latest_packet_loss = 1.0
+                        else:
+                            total = udp_sum.get('packets', 1)
+                            lost  = udp_sum.get('lost_packets', 0)
+                            self._latest_packet_loss = min(
+                                lost / max(total, 1), 1.0)
+
+                            # jitter_ms is a reliable latency proxy under congestion
+                            jitter = udp_sum.get('jitter_ms', 0.5)
+                            self._latest_latency_ms = max(jitter, 0.5)
+                else:
+                    # No JSON at all — link is down or server not yet up
+                    self._latest_packet_loss = 1.0
             except Exception:
-                pass
+                self._latest_packet_loss = 1.0
             time.sleep(3)
 
     def _flush_live_csv(self):
@@ -394,20 +428,31 @@ def run_emulation():
     # Start lightweight background traffic — 10 Mbps per stream (laptop-safe)
     info("*** Starting background traffic (h1→h2, h1→h3)\n")
     def start_traffic(src, dst_ip, bw_mbps):
-        r = src.cmd(f'iperf3 -c {dst_ip} -t 9999 -b {bw_mbps}M &')
+        # Redirect stdout/stderr to /dev/null — prevents iperf3 progress
+        # lines from contaminating subsequent host.cmd() output buffers.
+        r = src.cmd(f'iperf3 -c {dst_ip} -t 9999 -b {bw_mbps}M > /dev/null 2>&1 &')
         if 'error' in r.lower() or 'not found' in r.lower():
-            src.cmd(f'iperf  -c {dst_ip} -t 9999 -b {bw_mbps}M &')
+            src.cmd(f'iperf  -c {dst_ip} -t 9999 -b {bw_mbps}M > /dev/null 2>&1 &')
 
     for h in [h2, h3]:
+        # Port 5201: background TCP traffic
         h.cmd('iperf3 -s -D 2>/dev/null || iperf -s -D')
+        # Port 5202: dedicated probe server (never busy — only used by UDP probe)
+        h.cmd('iperf3 -s -p 5202 -D 2>/dev/null')
     time.sleep(2)
 
+    # Redirect background iperf3 output to /dev/null — CRITICAL:
+    # Without this, iperf3 progress lines contaminate host.cmd() output
+    # buffers, breaking the UDP probe's JSON parser.
     start_traffic(h1, '10.0.0.2', 10)   # 10 Mbps — laptop safe
     start_traffic(h1, '10.0.0.3', 10)   # 10 Mbps
     time.sleep(3)
 
-    # Probe pair for latency/loss measurement
-    collector = TelemetryCollector(net, probe_host=h1, probe_target_ip='10.0.0.4')
+    # Probe pair for latency/loss measurement.
+    # FIX: use h2 (10.0.0.2) NOT h4 — h4 has no iperf server so pings always
+    # time out giving packet_loss_rate=1.0 for ALL rows (normal AND anomaly).
+    # h2 has iperf3 -s running (started above) so pings succeed during baseline.
+    collector = TelemetryCollector(net, probe_host=h1, probe_target_ip='10.0.0.2')
     collector.start()
 
     # ── Phase 0: Warmup — Normal Baseline (15 min) ────────────────────────
@@ -419,7 +464,11 @@ def run_emulation():
     recovery_phase(collector, duration=480, label='Post-LinkFailure Recovery')
 
     # ── Phase 2: Congestion (3 min) ───────────────────────────────────────
-    inject_congestion(net, collector, intf_name='s2-eth2', delay_ms=80, duration=180)
+    # FIX: inject congestion on l1-eth2 (the leaf-1 → spine-1 uplink), which
+    # is on the h1→h2 probe path (h1→l1-eth1→l1-eth2→s1-eth1→s1-eth2→l2-eth2→h2).
+    # The original s2-eth2 target is on the l2→s2 path, NOT the probe path,
+    # so latency_ms never changed during congestion.
+    inject_congestion(net, collector, intf_name='l1-eth2', delay_ms=80, duration=180)
     recovery_phase(collector, duration=480, label='Post-Congestion Recovery')
 
     # ── Phase 3: Interface Flap (3 min) ───────────────────────────────────
@@ -432,14 +481,19 @@ def run_emulation():
     recovery_phase(collector, duration=480, label='Post-MTU Recovery')
 
     # ── Phase 5: Packet Loss (3 min) ──────────────────────────────────────
-    inject_packet_loss(net, collector, intf_name='s2-eth4', loss_pct=40, duration=180)
+    # FIX: use l1-eth2 (probe path: h1→l1-eth2→s1→l2→h2) not s2-eth4
+    # (s2-eth4 is on the l2→s2 uplink, NOT on the h1→h2 probe path, so
+    # 40% loss there is invisible to the iperf3 UDP probe).
+    inject_packet_loss(net, collector, intf_name='l1-eth2', loss_pct=40, duration=180)
     recovery_phase(collector, duration=480, label='Post-PacketLoss Recovery')
 
     # ── Done ──────────────────────────────────────────────────────────────
     info("\n*** Stopping telemetry collector and saving dataset...\n")
     collector.running = False
     collector.join()
-    collector.save('mininet_telemetry.csv')
+    collector.save('mininet_telemetry_v3.csv')   # v3 = dedicated probe port 5202
+    info("\n*** Dataset saved to mininet_telemetry_v3.csv\n")
+
 
     info("\n*** Dropping into CLI — type 'exit' to shut down\n")
     CLI(net)

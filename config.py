@@ -18,11 +18,11 @@ for d in [TOPOLOGY_DIR, TELEMETRY_DIR, RESULTS_DIR]:
 # LLM Configuration
 LLM_PROVIDER = os.getenv("LLM_PROVIDER", "gemini")
 LLM_MODEL_MAP = {
-    "gemini": "gemini-1.5-flash",
+    "gemini": "gemini-3.8-flash",
     "openai": "gpt-4o-mini",
     "ollama": "qwen2.5:7b-instruct",
 }
-LLM_MODEL = LLM_MODEL_MAP.get(LLM_PROVIDER, "gemini-2.0-flash")
+LLM_MODEL = LLM_MODEL_MAP.get(LLM_PROVIDER, "gemini-3.8-flash")
 
 # Simulation Parameters
 RANDOM_SEED = 42

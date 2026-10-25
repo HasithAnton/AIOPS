@@ -12,17 +12,11 @@ from network.scenarios import FailureScenario, build_all_scenarios
 from detection.isolation_forest import IsolationForestDetector
 from detection.baseline_models import BaselineDetector
 from detection.evaluator import DetectionEvaluator
-from agent.react_agent import ReActAgent
-from agent.llm_provider import LLMProviderFactory
-from agent.prompts import RCA_SYSTEM_PROMPT, ALERT_TEMPLATE
-from agent.tools.registry import TOOL_REGISTRY, TOOLS_SCHEMA
+from agent.react_agent import run_rca_investigation
+from agent.run_agent import get_llm
+from agent.prompts import RCA_SYSTEM_PROMPT
+from agent.tools.diagnostic_tools import ALL_TOOLS, inject_network_state
 from agent.rca_evaluator import RCAEvaluator
-
-import agent.tools.get_metrics as get_metrics
-import agent.tools.inspect_topology as inspect_topology
-import agent.tools.check_routes as check_routes
-import agent.tools.trace_path as trace_path
-import agent.tools.query_logs as query_logs
 
 logger = logging.getLogger(__name__)
 
@@ -82,10 +76,14 @@ class BenchmarkRunner:
             "topology_obj": topology
         }
         
-        # 4. Inject this state into all tool modules
-        from agent.tools import inject_network_state_to_tools
-        inject_network_state_to_tools(network_state)
-        
+        # 4. Inject live state so diagnostic tools can see topology/metrics/syslogs
+        inject_network_state(
+            topology = network_state.get("topology", {}),
+            metrics  = network_state.get("metrics",  {}),
+            syslogs  = network_state.get("syslogs",  []),
+            scores   = network_state.get("scores",   {}),
+        )
+
         # 5. Return the network_state
         return network_state
 
@@ -95,35 +93,41 @@ class BenchmarkRunner:
             topology.build_spine_leaf()
         else:
             topology.build_hierarchical_wan()
-            
+
         telemetry_engine = TelemetryEngine(topology)
         self.setup_network_state(scenario, topology, telemetry_engine)
-        
-        client, model_name = LLMProviderFactory.get_client(self.llm_provider)
-        agent = ReActAgent(
-            llm_client=client,
-            model=model_name,
-            system_prompt=RCA_SYSTEM_PROMPT,
-            tools_registry=TOOL_REGISTRY,
-            tools_schema=TOOLS_SCHEMA,
-            verbose=self.verbose
+
+        # Build alert dict for the LangGraph agent
+        alert = {
+            "device_id":    scenario.ground_truth["entity"],
+            "interface_id": scenario.ground_truth["interface"],
+            "anomaly_type": scenario.ground_truth["fault_class"].lower(),
+            "mse_score":    "N/A",
+            "tier":         3,
+            "timestamp":    "N/A",
+        }
+
+        llm          = get_llm()
+        agent_result = run_rca_investigation(
+            alert         = alert,
+            tools         = ALL_TOOLS,
+            llm           = llm,
+            system_prompt = RCA_SYSTEM_PROMPT,
+            verbose       = self.verbose,
         )
-        
-        alert_msg = ALERT_TEMPLATE.format(alert_message=scenario.alert_message)
-        agent_result = agent.run(alert_msg)
-        
-        evaluator = RCAEvaluator()
-        eval_result = evaluator.evaluate(scenario, agent_result)
-        
+
+        evaluator  = RCAEvaluator()
+        eval_result = evaluator.evaluate(scenario, agent_result.get("final_report", ""))
+
         return {
-            "scenario": scenario.id,
+            "scenario":     scenario.id,
             "agent_result": agent_result,
-            "evaluation": eval_result
+            "evaluation":   eval_result,
         }
 
     def run_all_scenarios(self, scenarios: List[FailureScenario] = None) -> Dict:
         if scenarios is None:
-            scenarios = build_all_scenarios()
+            scenarios = build_all_scenarios()  # uses default topologies
             
         results = []
         for scenario in scenarios:

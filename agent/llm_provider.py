@@ -29,7 +29,7 @@ class LLMProviderFactory:
                 api_key=api_key,
                 base_url="https://generativelanguage.googleapis.com/v1beta/openai/"
             )
-            return client, "gemini-2.0-flash"
+            return client, "gemini-3.8-flash"
         elif provider == "openai":
             api_key = os.environ.get("OPENAI_API_KEY", "")
             client = OpenAI(api_key=api_key)

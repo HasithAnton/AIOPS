@@ -64,12 +64,111 @@ def fresh_state() -> dict:
 # ── Model loader ──────────────────────────────────────────────────────────────
 
 def load_models():
+    # Prefer Mininet fine-tuned models if available
+    mininet_dir = ROOT / "emulation" / "mininet_models"
+    use_mininet = (mininet_dir / "random_forest.pkl").exists() and \
+                  (mininet_dir / "lstm_autoencoder.pth").exists()
+
+    rf_path   = mininet_dir / "random_forest.pkl"   if use_mininet else ROOT / "data/models/random_forest.pkl"
+    lstm_path = mininet_dir / "lstm_autoencoder.pth" if use_mininet else ROOT / "data/models/lstm_autoencoder.pth"
+
+    if use_mininet:
+        print("[pipeline] ✓ Using Mininet fine-tuned models")
+    else:
+        print("[pipeline] Using base simulated models")
+
     print("[pipeline] Loading RF model...")
-    rf = joblib.load(ROOT / "data/models/random_forest.pkl")
+    rf_raw = joblib.load(rf_path)
+
+    # Handle new bundle format {clf, pipeline, threshold, ...} vs old detector object
+    if isinstance(rf_raw, dict) and 'clf' in rf_raw:
+        import types
+        import numpy as _np
+
+        _clf           = rf_raw['clf']
+        _pipeline      = rf_raw['pipeline']
+        _threshold     = rf_raw['threshold']
+        _extra_scaler  = rf_raw.get('extra_scaler', None)
+        _mn_features   = rf_raw.get('mn_features', [])
+        _flat_features = rf_raw.get('flat_features', ['cpu_utilization'])
+        _pipeline_type = type(_pipeline).__name__
+
+        def _zero_flat(df_in):
+            df_out = df_in.copy()
+            for col in _flat_features:
+                if col in df_out.columns:
+                    df_out[col] = 0.0
+            return df_out
+
+        def _add_mininet_features(df, window=12):
+            """Stateless Mininet-extra feature injection (mirrors finetune_on_mininet.py)."""
+            import pandas as _pd
+            df = df.copy()
+            if 'device_id' not in df.columns:
+                df['device_id'] = 'unknown'
+            if 'interface_id' not in df.columns:
+                df['interface_id'] = 'unknown'
+            grp = df.groupby(['device_id', 'interface_id'])
+            w   = window
+            df['mn_link_down']   = (df.get('ifOperStatus', 1) == 2).astype(float)
+            if 'ifOperStatus' in df.columns:
+                df['mn_oper_flap'] = grp['ifOperStatus'].transform(
+                    lambda x: x.rolling(w, min_periods=1).std()).fillna(0)
+            else:
+                df['mn_oper_flap'] = 0.0
+            delta_in = 'delta_in_octets' if 'delta_in_octets' in df.columns else 'delta_ifInOctets'
+            if delta_in in df.columns:
+                df['mn_zero_traffic'] = (df[delta_in] == 0).astype(float)
+                roll_mean = grp[delta_in].transform(
+                    lambda x: x.rolling(w, min_periods=1).mean()) + 1.0
+                df['mn_burst_ratio'] = df[delta_in] / roll_mean
+            else:
+                df['mn_zero_traffic'] = 0.0
+                df['mn_burst_ratio']  = 0.0
+            if 'ifInDiscards' in df.columns and 'ifInOctets' in df.columns:
+                df['mn_discard_rate'] = df['ifInDiscards'] / (df['ifInOctets'] + 1)
+            else:
+                df['mn_discard_rate'] = 0.0
+            return df
+
+        def _predict(df_in):
+            df_z  = _zero_flat(df_in)
+            if _mn_features and _extra_scaler is not None:
+                df_mn = _add_mininet_features(df_z)
+            else:
+                df_mn = df_z
+
+            X_base, _ = _pipeline.transform(df_mn)
+
+            if _mn_features and _extra_scaler is not None:
+                Xe    = _extra_scaler.transform(
+                    df_mn[_mn_features].fillna(0).values)
+                X     = _np.hstack([X_base, Xe])
+            else:
+                X = X_base
+
+            proba = _clf.predict_proba(X)[:, 1]
+            preds = (proba >= _threshold).astype(int)
+            return preds, proba
+
+        rf               = types.SimpleNamespace()
+        rf.predict       = _predict
+        rf.clf           = _clf
+        rf.pipeline      = _pipeline
+        rf.clf_threshold = _threshold
+
+        print(f"[pipeline]   RF pipeline type : {_pipeline_type}")
+        print(f"[pipeline]   RF extra features: {_mn_features}")
+        print(f"[pipeline]   RF threshold     : {_threshold:.3f}")
+    else:
+        rf = rf_raw   # old-style detector object with .predict() already attached
 
     print("[pipeline] Loading LSTM model...")
+    lstm_path_str = str(lstm_path)
+    if not os.path.exists(lstm_path_str):
+        lstm_path_str = str(ROOT / "data/models/lstm_autoencoder.pth")
     lstm = torch.load(
-        ROOT / "data/models/lstm_autoencoder.pth",
+        lstm_path_str,
         map_location="cpu", weights_only=False
     )
     lstm.device = torch.device("cpu")

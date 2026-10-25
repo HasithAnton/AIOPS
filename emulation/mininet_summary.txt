@@ -1,0 +1,16 @@
+
+=======================================================
+  DATASET SUMMARY
+=======================================================
+  Total records    : 75,360
+  Normal records   : 58,846
+  Anomaly records  : 16,514 (21.9%)
+
+  Records per fault type:
+    congestion          : 3,374
+    interface_flap      : 3,220
+    link_failure        : 3,380
+    mtu_mismatch        : 3,260
+    none                : 58,846
+    packet_loss         : 3,280
+=======================================================

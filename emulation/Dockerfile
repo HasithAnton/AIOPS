@@ -15,6 +15,8 @@ RUN apt-get update && apt-get install -y \
     python3-pip \
     && rm -rf /var/lib/apt/lists/*
 
+RUN pip3 install pandas
+
 # Fix Mininet controller issue in newer Ubuntu
 RUN ln -s /usr/bin/ovs-testcontroller /usr/bin/controller
 

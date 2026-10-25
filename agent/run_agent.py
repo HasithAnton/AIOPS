@@ -48,7 +48,7 @@ def get_llm():
                 "  export GOOGLE_API_KEY=your_key_here"
             )
         return ChatGoogleGenerativeAI(
-            model="gemini-2.5-flash",
+            model="gemini-3.8-flash",
             google_api_key=api_key,
             temperature=0.1,
             thinking_budget=0,   # disable thinking — avoids thought_signature errors with LangGraph

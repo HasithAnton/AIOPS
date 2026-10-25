@@ -1,22 +1,40 @@
-# Environments
+# ── Environments ──────────────────────────────────────
 venv/
 env/
 .env
 
-# Python
+# ── Python ────────────────────────────────────────────
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
 .pytest_cache/
 
-# OS
+# ── OS ────────────────────────────────────────────────
 .DS_Store
+Thumbs.db
 
-# Archives
+# ── Archives ──────────────────────────────────────────
 *.zip
 *.tar.gz
 
-# Data & Models (Optional, but good to ignore massive files)
-# For now, we allow the small CSVs and models to sync.
-# data/*.parquet
+# ── Heavy data files ──────────────────────────────────
+data/
+*.parquet
+
+# ── Large Mininet CSVs ────────────────────────────────
+emulation/mininet_telemetry*.csv
+
+# ── Trained model artefacts ───────────────────────────
+*.pkl
+*.pth
+*.pt
+*.h5
+emulation/mininet_models/
+
+# ── Results / scratch ─────────────────────────────────
+results/
+scratch/
+
+# ── Logs ──────────────────────────────────────────────
+*.log

@@ -178,10 +178,64 @@ def cmd_detect(args):
     ReportGenerator().generate_detection_report(results, "results/detection")
 
 def cmd_investigate(args):
-    """Run Tier 3 LangGraph ReAct Agent on live detection output."""
-    from agent.run_agent import run_agent_pipeline
-    max_alerts = getattr(args, "max_alerts", 3)
-    run_agent_pipeline(max_alerts=max_alerts)
+    """Run Tier 3 LangGraph ReAct Agent for a specific named scenario."""
+    from network.topology import NetworkTopology
+    from network.telemetry_generator import TelemetryEngine
+    from network.scenarios import build_all_scenarios
+    from agent.react_agent import run_rca_investigation
+    from agent.run_agent import get_llm, build_network_state
+    from agent.tools.diagnostic_tools import ALL_TOOLS
+    from agent.prompts import RCA_SYSTEM_PROMPT
+
+    # ── Build scenario bank and find the requested scenario ───────────────────
+    sl_topo = NetworkTopology(); sl_topo.build_spine_leaf()
+    wan_topo = NetworkTopology(); wan_topo.build_hierarchical_wan()
+    base_time = pd.Timestamp("2026-09-18 00:00:00", tz="UTC")
+    scenarios = build_all_scenarios(sl_topo, wan_topo, base_time)
+
+    scenario_id = getattr(args, "scenario", None)
+    scenario = next((s for s in scenarios if s.id == scenario_id), None)
+
+    if scenario is None:
+        available = ", ".join(s.id for s in scenarios)
+        print(f"Error: Unknown scenario '{scenario_id}'. Available: {available}")
+        return
+
+    print(f"\nInvestigating scenario {scenario.id}: {scenario.name}")
+
+    # ── Generate telemetry for this scenario ──────────────────────────────────
+    topology = sl_topo if scenario.topology_type == "spine_leaf" else wan_topo
+    engine = TelemetryEngine(topology)
+    snmp_df, syslogs, _ = engine.generate_telemetry_window(
+        start_time       = scenario.anomaly_configs[0]["start_time"] - pd.Timedelta(minutes=5),
+        duration_seconds = 600,
+        interval_seconds = 15,
+        anomalies        = scenario.anomaly_configs,
+    )
+
+    # ── Build network state for diagnostic tools ───────────────────────────────
+    import numpy as np
+    dummy_scores = np.zeros(len(snmp_df))
+    build_network_state(snmp_df, syslogs, topology, dummy_scores, snmp_df)
+
+    # ── Build alert dict and run agent ────────────────────────────────────────
+    alert = {
+        "device_id":    scenario.ground_truth["entity"],
+        "interface_id": scenario.ground_truth["interface"],
+        "anomaly_type": scenario.ground_truth["fault_class"].lower(),
+        "mse_score":    "N/A",
+        "tier":         3,
+        "timestamp":    str(scenario.anomaly_configs[0].get("start_time", "N/A")),
+    }
+
+    llm = get_llm()
+    run_rca_investigation(
+        alert         = alert,
+        tools         = ALL_TOOLS,
+        llm           = llm,
+        system_prompt = RCA_SYSTEM_PROMPT,
+        verbose       = True,
+    )
 
 
 def cmd_benchmark(args):

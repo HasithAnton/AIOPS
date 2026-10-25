@@ -166,6 +166,12 @@ class LSTMAutoencoderDetector:
                 start_idx = j
 
             seq = X[start_idx: i + 1]
+            # Guard: clamp to at most seq_len rows (off-by-one at group boundary)
+            if len(seq) > self.seq_len:
+                seq = seq[-self.seq_len:]
+            if len(seq) == 0:
+                # Edge case: empty sequence (e.g. group boundary) — leave as zeros
+                continue
             if len(seq) < self.seq_len:
                 pad_len = self.seq_len - len(seq)
                 pad = np.repeat(seq[0:1], pad_len, axis=0)

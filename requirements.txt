@@ -1,11 +1,34 @@
-networkx>=3.0
+# Core data & ML
 numpy>=1.24
 pandas>=2.0
 scikit-learn>=1.3
 xgboost>=2.0
+torch>=2.0
+joblib>=1.3
+pyarrow>=14.0          # parquet support for pandas
+
+# Network graph
+networkx>=3.0
+
+# LangChain / LangGraph (Tier 3 Agent)
+langchain>=0.2
+langchain-core>=0.2
+langgraph>=0.1
+langchain-google-genai>=1.0   # Gemini provider
+langchain-openai>=0.1          # OpenAI provider
+langchain-ollama>=0.1          # Ollama (local) provider
+
+# LLM client libraries
+openai>=1.30
+google-generativeai>=0.7
+
+# Dashboard
+streamlit>=1.30
+
+# Visualisation
 matplotlib>=3.7
 seaborn>=0.12
-openai>=1.30
-streamlit>=1.30
 pyvis>=0.3
+
+# Reporting / utilities
 tabulate>=0.9
