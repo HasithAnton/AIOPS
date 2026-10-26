@@ -22,19 +22,26 @@ Thumbs.db
 data/
 *.parquet
 
-# ── Large Mininet CSVs ────────────────────────────────
-emulation/mininet_telemetry*.csv
+# ── Mininet CSVs (exclude all EXCEPT the augmented one used for demo) ─
+emulation/mininet_telemetry.csv
+emulation/mininet_telemetry_corrected.csv
+emulation/mininet_telemetry_live.csv
+emulation/mininet_telemetry_v2.csv
+emulation/mininet_telemetry_v3.csv
+# ↑ mininet_telemetry_augmented.csv is intentionally NOT excluded — needed for dashboard demo
 
-# ── Trained model artefacts ───────────────────────────
-*.pkl
-*.pth
+# ── Trained model artefacts (exclude heavy ones, keep mininet demo models) ─
 *.pt
 *.h5
 data/models/
-emulation/mininet_models/
+# ↑ emulation/mininet_models/*.pkl and *.pth are intentionally NOT excluded — needed for demo
 
 # ── Results / scratch ─────────────────────────────────
+results/
 scratch/
 
 # ── Logs ──────────────────────────────────────────────
 *.log
+
+# ── Word doc lock files ────────────────────────────────
+.~lock.*
