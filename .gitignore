@@ -34,7 +34,6 @@ data/models/
 emulation/mininet_models/
 
 # ── Results / scratch ─────────────────────────────────
-results/
 scratch/
 
 # ── Logs ──────────────────────────────────────────────

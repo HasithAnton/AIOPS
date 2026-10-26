@@ -41,17 +41,34 @@ def get_llm():
 
     if provider == "gemini":
         from langchain_google_genai import ChatGoogleGenerativeAI
-        api_key = os.getenv("GOOGLE_API_KEY")
+        api_key = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
         if not api_key:
             raise EnvironmentError(
-                "Set GOOGLE_API_KEY environment variable.\n"
-                "  export GOOGLE_API_KEY=your_key_here"
+                "Set GOOGLE_API_KEY or GEMINI_API_KEY environment variable.\n"
+                "  $env:GEMINI_API_KEY='your_key_here'"
             )
+        model = os.getenv("GEMINI_MODEL", "gemini-3.5-flash")
         return ChatGoogleGenerativeAI(
-            model="gemini-3.8-flash",
+            model=model,
             google_api_key=api_key,
             temperature=0.1,
             thinking_budget=0,   # disable thinking — avoids thought_signature errors with LangGraph
+        )
+
+    elif provider == "cerebras":
+        from langchain_openai import ChatOpenAI
+        api_key = os.getenv("CEREBRAS_API_KEY")
+        if not api_key:
+            raise EnvironmentError(
+                "Set CEREBRAS_API_KEY environment variable.\n"
+                "  $env:CEREBRAS_API_KEY='your_key_here'"
+            )
+        model = os.getenv("CEREBRAS_MODEL", "qwen-3.8-27b")
+        return ChatOpenAI(
+            model=model,
+            api_key=api_key,
+            base_url="https://api.cerebras.ai/v1",
+            temperature=0.1,
         )
 
     elif provider == "openai":
@@ -63,7 +80,7 @@ def get_llm():
         return ChatOllama(model="qwen2.5:7b-instruct", temperature=0.1)
 
     else:
-        raise ValueError(f"Unknown LLM_PROVIDER: {provider}. Choose: gemini, openai, ollama")
+        raise ValueError(f"Unknown LLM_PROVIDER: {provider}. Choose: gemini, cerebras, openai, ollama")
 
 
 # ─── State Builder ────────────────────────────────────────────────────────────
@@ -92,6 +109,8 @@ def build_network_state(snmp_df: pd.DataFrame, syslogs: list,
             "ifInOctets":      int(row.get("ifInOctets", 0)),
             "ifOutOctets":     int(row.get("ifOutOctets", 0)),
             "ifInDiscards":    int(row.get("ifInDiscards", 0)),
+            "ifOutDiscards":   int(row.get("ifOutDiscards", 0)),
+            "total_discards":  int(row.get("ifInDiscards", 0)) + int(row.get("ifOutDiscards", 0)),
             "ifInErrors":      int(row.get("ifInErrors", 0)),
             "cpu_utilization": float(row.get("cpu_utilization", 0)),
         }
@@ -253,7 +272,7 @@ def run_agent_pipeline(snmp_csv=None, max_alerts: int = 3):
 
     # ── Load topology + syslogs ───────────────────────────────────
     topo = NetworkTopology()
-    topo.build_hierarchical_wan()
+    topo.build_combined()
 
     # ── Load syslog (handle both .txt and .jsonl) ─────────────────
     syslogs = []
@@ -264,7 +283,7 @@ def run_agent_pipeline(snmp_csv=None, max_alerts: int = 3):
     )
     if syslog_candidates:
         syslog_file = syslog_candidates[-1]
-        with open(syslog_file) as f:
+        with open(syslog_file, encoding="utf-8") as f:
             for line in f:
                 line = line.strip()
                 if not line:
@@ -272,11 +291,13 @@ def run_agent_pipeline(snmp_csv=None, max_alerts: int = 3):
                 try:
                     import json as _json
                     obj = _json.loads(line)
-                    # Convert jsonl record to plain syslog string
-                    syslogs.append(
-                        f"[{obj.get('timestamp','')}] {obj.get('host','')} "
-                        f"{obj.get('facility','')} {obj.get('message','')}"
-                    )
+                    if "log" in obj:
+                        syslogs.append(obj["log"])
+                    else:
+                        syslogs.append(
+                            f"[{obj.get('timestamp','')}] {obj.get('host','')} "
+                            f"{obj.get('facility','')} {obj.get('message','')}"
+                        )
                 except Exception:
                     syslogs.append(line)
     print(f"[✓] Loaded topology ({len(topo.get_all_devices())} devices) "

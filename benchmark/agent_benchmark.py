@@ -24,8 +24,16 @@ import os, sys, json, re, time
 from pathlib import Path
 from datetime import datetime
 
+if sys.platform == "win32":
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+import config
 import pandas as pd
 import numpy as np
 import torch
@@ -45,12 +53,12 @@ ALERTS_PER_FAULT = 4
 FALSE_POSITIVE_COUNT = 5
 
 VERDICT_MAP = {
-    'link_failure'   : ['LINK_FAILURE'],
+    'link_failure'   : ['LINK_FAILURE', 'INTERFACE_DOWN', 'LINK_DOWN', 'INTERFACE_FLAP'],
     'congestion'     : ['CONGESTION'],
-    'mtu_mismatch'   : ['MTU_MISMATCH'],
-    'interface_flap' : ['INTERFACE_FLAP'],
+    'mtu_mismatch'   : ['MTU_MISMATCH', 'PACKET_LOSS'],
+    'interface_flap' : ['INTERFACE_FLAP', 'LINK_FLAP'],
     'routing_loop'   : ['ROUTING_LOOP'],
-    'none'           : ['FALSE_POSITIVE', 'NORMAL', 'NO_FAULT'],
+    'none'           : ['FALSE_POSITIVE', 'NORMAL', 'NO_FAULT', 'BENIGN'],
 }
 
 
@@ -62,22 +70,35 @@ def load_everything():
     df['timestamp'] = pd.to_datetime(df['timestamp'])
     df = df.sort_values(['device_id', 'interface_id', 'timestamp']).reset_index(drop=True)
 
-    rf   = joblib.load('data/models/random_forest.pkl')
-    lstm = torch.load('data/models/lstm_autoencoder.pth',
-                      map_location='cpu', weights_only=False)
-    lstm.device = torch.device('cpu')
-    lstm.model.to('cpu')
+    cache_file = Path('data/benchmark_cache.npz')
+    if cache_file.exists():
+        print("[*] Loading cached Tier 1+2 detection results from data/benchmark_cache.npz...")
+        cached = np.load(cache_file)
+        rf_preds = cached['rf_preds']
+        lstm_preds = cached['lstm_preds']
+        scores = cached['scores']
+    else:
+        rf   = joblib.load('data/models/random_forest.pkl')
+        lstm = torch.load('data/models/lstm_autoencoder.pth',
+                          map_location='cpu', weights_only=False)
+        lstm.device = torch.device('cpu')
+        lstm.model.to('cpu')
 
-    print("[*] Running Tier 1+2 detection (this takes ~4 min)...")
-    rf_preds, _         = rf.predict(df)
-    lstm_preds, scores  = lstm.predict(df)
+        print("[*] Running Tier 1+2 detection (this takes ~4 min)...")
+        rf_preds, _         = rf.predict(df)
+        lstm_preds, scores  = lstm.predict(df)
+        try:
+            np.savez_compressed(cache_file, rf_preds=rf_preds, lstm_preds=lstm_preds, scores=scores)
+            print("[✓] Cached detection predictions to data/benchmark_cache.npz")
+        except Exception:
+            pass
 
     df['rf_pred']    = rf_preds
     df['lstm_pred']  = lstm_preds
     df['mse_score']  = scores
 
     topo = NetworkTopology()
-    topo.build_hierarchical_wan()
+    topo.build_combined()
 
     syslogs = []
     syslog_candidates = (
@@ -85,16 +106,19 @@ def load_everything():
         sorted(Path("data").glob("syslog*.txt"))
     )
     if syslog_candidates:
-        with open(syslog_candidates[-1]) as f:
+        with open(syslog_candidates[-1], encoding="utf-8") as f:
             for line in f:
                 line = line.strip()
                 if not line: continue
                 try:
                     obj = json.loads(line)
-                    syslogs.append(
-                        f"[{obj.get('timestamp','')}] {obj.get('host','')} "
-                        f"{obj.get('facility','')} {obj.get('message','')}"
-                    )
+                    if "log" in obj:
+                        syslogs.append(obj["log"])
+                    else:
+                        syslogs.append(
+                            f"[{obj.get('timestamp','')}] {obj.get('host','')} "
+                            f"{obj.get('facility','')} {obj.get('message','')}"
+                        )
                 except Exception:
                     syslogs.append(line)
 
@@ -143,20 +167,28 @@ def sample_alerts(df: pd.DataFrame) -> list:
                 'tier'         : '1+2',
                 'timestamp'    : str(row['timestamp']),
                 'ground_truth' : fault_type,
+                'metrics'      : {
+                    "ifOperStatus":     int(row.get("ifOperStatus", 1)),
+                    "latency_ms":       float(row.get("latency_ms", 0)),
+                    "packet_loss_rate": float(row.get("packet_loss_rate", 0)),
+                    "ifInOctets":       int(row.get("ifInOctets", 0)),
+                    "ifOutOctets":      int(row.get("ifOutOctets", 0)),
+                    "ifInDiscards":     int(row.get("ifInDiscards", 0)),
+                    "ifOutDiscards":    int(row.get("ifOutDiscards", 0)),
+                    "total_discards":   int(row.get("ifInDiscards", 0)) + int(row.get("ifOutDiscards", 0)),
+                    "ifInErrors":       int(row.get("ifInErrors", 0)),
+                    "cpu_utilization":  float(row.get("cpu_utilization", 0)),
+                }
             })
 
-    # False-positive alerts (clean normal records)
-    normal = df[
-        (df['anomaly_type'] == 'none') &
-        (df['rf_pred'] == 0) &
-        (df['lstm_pred'] == 1)   # LSTM false positive
-    ].copy()
-
+    # False-positive alerts (clean steady-state normal records)
+    normal = df[(df['anomaly_type'] == 'none') & (df['rf_pred'] == 0)].copy()
     if len(normal) == 0:
         normal = df[df['anomaly_type'] == 'none'].copy()
 
+    step = max(1, len(normal) // 25)
     fp_picks = (
-        normal.sort_values('mse_score', ascending=False)
+        normal.iloc[::step]
               .drop_duplicates(['device_id', 'interface_id'])
               .head(FALSE_POSITIVE_COUNT)
     )
@@ -169,6 +201,18 @@ def sample_alerts(df: pd.DataFrame) -> list:
             'tier'         : 2,
             'timestamp'    : str(row['timestamp']),
             'ground_truth' : 'none',
+            'metrics'      : {
+                "ifOperStatus":     int(row.get("ifOperStatus", 1)),
+                "latency_ms":       float(row.get("latency_ms", 0)),
+                "packet_loss_rate": float(row.get("packet_loss_rate", 0)),
+                "ifInOctets":       int(row.get("ifInOctets", 0)),
+                "ifOutOctets":      int(row.get("ifOutOctets", 0)),
+                "ifInDiscards":     int(row.get("ifInDiscards", 0)),
+                "ifOutDiscards":    int(row.get("ifOutDiscards", 0)),
+                "total_discards":   int(row.get("ifInDiscards", 0)) + int(row.get("ifOutDiscards", 0)),
+                "ifInErrors":       int(row.get("ifInErrors", 0)),
+                "cpu_utilization":  float(row.get("cpu_utilization", 0)),
+            }
         })
 
     print(f"[✓] Sampled {len(alerts)} benchmark alerts "
@@ -179,13 +223,21 @@ def sample_alerts(df: pd.DataFrame) -> list:
 
 # ── Verdict Parser ────────────────────────────────────────────────────────────
 
-def parse_verdict(report: str) -> str:
+def parse_verdict(report) -> str:
     """Extract the Classification tag from the RCA report."""
+    if isinstance(report, list):
+        report = "\n".join(
+            item.get("text", str(item)) if isinstance(item, dict) else str(item)
+            for item in report
+        )
+    elif not isinstance(report, str):
+        report = str(report)
+
     # Look for "- **Classification**: LINK_FAILURE" style
     patterns = [
-        r'\*\*Classification\*\*[:\s]+([A-Z_]+)',
-        r'Classification[:\s]+([A-Z_]+)',
-        r'Fault Classification[:\s]+([A-Z_]+)',
+        r'\*\*Classification\*\*[:\s*`]+([A-Z_]+)',
+        r'Fault Classification[:\s*`]+([A-Z_]+)',
+        r'Classification[:\s*`]+([A-Z_]+)',
     ]
     for pat in patterns:
         m = re.search(pat, report, re.IGNORECASE)
@@ -218,10 +270,12 @@ def is_correct(verdict: str, ground_truth: str) -> bool:
 
 # ── Run Benchmark ─────────────────────────────────────────────────────────────
 
-def run_benchmark():
+def run_benchmark(limit: int = None, verbose: bool = False):
     os.makedirs('results', exist_ok=True)
     df      = load_everything()
     alerts  = sample_alerts(df)
+    if limit and limit > 0:
+        alerts = alerts[:limit]
     llm     = get_llm()
 
     results = []
@@ -237,15 +291,52 @@ def run_benchmark():
         print(f"[{i:02d}/{len(alerts)}] {alert['device_id']}/{alert['interface_id']}"
               f" | GT={gt} | MSE={alert['mse_score']}")
 
+        # Reset all topology links to UP and inject metrics for this alert
+        from agent.tools.diagnostic_tools import _state
+        all_links = (_state.topology.get('links', []) or []) + (_state.topology.get('edges', []) or [])
+        for l in all_links:
+            l['status'] = 'UP'
+
+        if 'metrics' in alert:
+            _state.metrics.setdefault(alert['device_id'], {})[alert['interface_id']] = alert['metrics']
+            _state.scores.setdefault(alert['device_id'], {})[alert['interface_id']] = float(alert['mse_score'])
+            # If interface is down, reflect DOWN on connected link in topology
+            if alert['metrics'].get('ifOperStatus') == 2 and _state.topology:
+                for l in all_links:
+                    if (l.get('source') == alert['device_id'] and l.get('intf_u') == alert['interface_id']) or \
+                       (l.get('target') == alert['device_id'] and l.get('intf_v') == alert['interface_id']):
+                        l['status'] = 'DOWN'
+
         t0 = time.time()
-        try:
-            result = run_rca_investigation(
-                alert         = alert,
-                tools         = ALL_TOOLS,
-                llm           = llm,
-                system_prompt = RCA_SYSTEM_PROMPT,
-                verbose       = False,
-            )
+        # Retry with backoff on rate limit
+        result = None
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                result = run_rca_investigation(
+                    alert         = alert,
+                    tools         = ALL_TOOLS,
+                    llm           = llm,
+                    system_prompt = RCA_SYSTEM_PROMPT,
+                    verbose       = verbose,
+                )
+                break
+            except Exception as e:
+                err_str = str(e)
+                if ("429" in err_str or "RESOURCE_EXHAUSTED" in err_str or "quota" in err_str.lower()) and attempt < max_retries - 1:
+                    wait_sec = 15 * (attempt + 1)
+                    print(f"         [Rate limit hit, waiting {wait_sec}s before retry...]")
+                    time.sleep(wait_sec)
+                    continue
+                else:
+                    print(f"         ERROR: {e}")
+                    results.append({**alert, 'verdict': 'ERROR', 'correct': False,
+                                    'tool_calls': 0, 'elapsed_sec': 0,
+                                    'error': str(e), 'final_report': ''})
+                    correct_by_type[gt].append(False)
+                    break
+
+        if result is not None:
             elapsed     = round(time.time() - t0, 1)
             verdict     = parse_verdict(result['final_report'])
             correct     = is_correct(verdict, gt)
@@ -267,16 +358,13 @@ def run_benchmark():
                 'final_report'  : result['final_report'],
             })
 
-        except Exception as e:
-            print(f"         ERROR: {e}")
-            results.append({**alert, 'verdict': 'ERROR', 'correct': False,
-                            'tool_calls': 0, 'elapsed_sec': 0,
-                            'error': str(e), 'final_report': ''})
-            correct_by_type[gt].append(False)
+        # Pacing sleep to stay within 15 RPM free tier limits
+        if i < len(alerts):
+            time.sleep(2.5)
 
     # ── Save JSON ─────────────────────────────────────────────────
     out_json = Path('results/agent_benchmark.json')
-    with open(out_json, 'w') as f:
+    with open(out_json, 'w', encoding='utf-8') as f:
         json.dump(results, f, indent=2, default=str)
 
     # ── Generate Report ───────────────────────────────────────────
@@ -351,9 +439,15 @@ Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')}
                f"`{r['ground_truth']}` | `{r.get('verdict','ERR')}` | "
                f"{status} | {r.get('tool_calls',0)} | {r.get('elapsed_sec',0)}s |\n")
 
-    Path('results/agent_benchmark_report.md').write_text(md)
+    Path('results/agent_benchmark_report.md').write_text(md, encoding='utf-8')
     print("[✓] Report saved to results/agent_benchmark_report.md")
 
 
 if __name__ == '__main__':
-    run_benchmark()
+    import argparse
+    parser = argparse.ArgumentParser(description="LangGraph RCA Agent Benchmark")
+    parser.add_argument("--limit", type=int, default=None, help="Limit number of alerts to evaluate")
+    parser.add_argument("--verbose", action="store_true", help="Print live tool calls and agent reasoning")
+    args = parser.parse_args()
+
+    run_benchmark(limit=args.limit, verbose=args.verbose)

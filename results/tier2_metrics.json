@@ -1,0 +1,39 @@
+{
+  "model_name": "LSTMAutoencoderDetector",
+  "architecture": {
+    "encoder": "LSTM(hidden_dim=32, layers=2, dropout=0.2)",
+    "bottleneck": "Linear(latent_dim=16)",
+    "decoder": "LSTM(hidden_dim=32, layers=2, dropout=0.2)",
+    "sequence_length": 10,
+    "loss_function": "MeanSquaredError (MSE)",
+    "training_epochs": 50
+  },
+  "overall_performance": {
+    "roc_auc": 0.9939705269502143,
+    "pr_auc": 0.9068215032359283,
+    "f1_score": 0.8940998487140696,
+    "precision": 0.9307086614173228,
+    "recall": 0.8602620087336245
+  },
+  "mse_distribution": {
+    "normal_traffic": {
+      "count": 756900,
+      "mean_mse": 0.009131556376814842,
+      "median_mse": 0.0033995877020061016,
+      "std_mse": 0.07162605971097946,
+      "p95_mse": 0.01136275939643383,
+      "p99_mse": 0.02092786133289337,
+      "max_mse": 1.5103403329849243
+    },
+    "anomalous_traffic": {
+      "count": 3420,
+      "mean_mse": 0.007935678586363792,
+      "median_mse": 0.003375345841050148,
+      "std_mse": 0.05204453691840172,
+      "p95_mse": 0.01443749014288187,
+      "max_mse": 0.8176882863044739
+    }
+  },
+  "calibrated_threshold": 0.000428,
+  "generated_at": "2026-10-26 13:52:50"
+}

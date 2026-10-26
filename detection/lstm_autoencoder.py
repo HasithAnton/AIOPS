@@ -357,6 +357,7 @@ class LSTMAutoencoderDetector:
     def predict(self, test_df: pd.DataFrame) -> Tuple[np.ndarray, np.ndarray]:
         X_robust, _ = self.pipeline.transform(test_df)
         X_scaled    = self.dl_scaler.transform(X_robust)
+        X_scaled    = np.clip(X_scaled, -2.0, 5.0)
         X_seq       = self._create_sequences(X_scaled, test_df)
 
         raw_mse = self._batched_predict_mse(X_seq)

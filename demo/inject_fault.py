@@ -17,7 +17,7 @@ Usage (Mac demo mode — just marks state.json):
     python3 demo/inject_fault.py link_failure --sim
 """
 
-import sys, os, json, time, subprocess, argparse
+import sys, os, json, time, subprocess, argparse, uuid
 from pathlib import Path
 from datetime import datetime
 
@@ -44,11 +44,19 @@ FAULT_COLORS = {
 
 def update_state(fault: str):
     """Write the injected fault into the shared demo state."""
+    state = {}
     if STATE_FILE.exists():
-        with open(STATE_FILE) as f:
-            state = json.load(f)
-    else:
-        state = {}
+        for _ in range(15):
+            try:
+                with open(STATE_FILE, "r", encoding="utf-8") as f:
+                    content = f.read()
+                    if content.strip():
+                        state = json.loads(content)
+                        break
+            except (PermissionError, OSError, json.JSONDecodeError):
+                time.sleep(0.03)
+            except Exception:
+                break
 
     if fault == "recover":
         state["injected_fault"] = "recover"
@@ -61,10 +69,29 @@ def update_state(fault: str):
 
     state["last_update"] = str(datetime.now())
 
-    tmp = STATE_FILE.with_suffix(".tmp")
-    with open(tmp, "w") as f:
-        json.dump(state, f, default=str)
-    tmp.replace(STATE_FILE)
+    try:
+        (ROOT / "demo" / "fault_trigger.txt").write_text(fault, encoding="utf-8")
+    except Exception:
+        pass
+
+    tmp = STATE_FILE.parent / f"state_{os.getpid()}_{uuid.uuid4().hex[:6]}.tmp"
+    try:
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(state, f, default=str)
+        for _ in range(15):
+            try:
+                tmp.replace(STATE_FILE)
+                break
+            except (PermissionError, OSError):
+                time.sleep(0.03)
+    except Exception:
+        pass
+    finally:
+        if tmp.exists():
+            try:
+                tmp.unlink()
+            except Exception:
+                pass
 
     print(f"[inject] State updated: {fault}")
 

@@ -1,13 +1,17 @@
 """
 Shared utilities and CSS for the AIOps dashboard.
 """
-import json
+import json, sys
+from pathlib import Path
 import pandas as pd
 import numpy as np
 import torch
 import joblib
 import streamlit as st
-from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 # ── Professional CSS ──────────────────────────────────────────────────────────
 
@@ -178,12 +182,12 @@ def load_syslogs():
 
 def load_benchmark_results():
     p = Path('results/agent_benchmark.json')
-    return json.loads(p.read_text()) if p.exists() else None
+    return json.loads(p.read_text(encoding='utf-8', errors='replace')) if p.exists() else None
 
 
 def load_rca_results():
     p = Path('results/rca_reports.json')
-    return json.loads(p.read_text()) if p.exists() else None
+    return json.loads(p.read_text(encoding='utf-8', errors='replace')) if p.exists() else None
 
 
 def inject_css():

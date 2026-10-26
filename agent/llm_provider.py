@@ -29,7 +29,16 @@ class LLMProviderFactory:
                 api_key=api_key,
                 base_url="https://generativelanguage.googleapis.com/v1beta/openai/"
             )
-            return client, "gemini-3.8-flash"
+            model = os.environ.get("GEMINI_MODEL", "gemini-3.5-flash")
+            return client, model
+        elif provider == "cerebras":
+            api_key = os.environ.get("CEREBRAS_API_KEY", "")
+            client = OpenAI(
+                api_key=api_key,
+                base_url="https://api.cerebras.ai/v1"
+            )
+            model = os.environ.get("CEREBRAS_MODEL", "qwen-3.8-27b")
+            return client, model
         elif provider == "openai":
             api_key = os.environ.get("OPENAI_API_KEY", "")
             client = OpenAI(api_key=api_key)

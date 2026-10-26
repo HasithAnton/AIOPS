@@ -6,6 +6,14 @@ from pathlib import Path
 
 # Project paths
 PROJECT_ROOT = Path(__file__).parent
+env_file = PROJECT_ROOT / ".env"
+if env_file.exists():
+    for line in env_file.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if line and not line.startswith("#") and "=" in line:
+            k, v = line.split("=", 1)
+            os.environ.setdefault(k.strip(), v.strip())
+
 DATA_DIR = PROJECT_ROOT / "data"
 TOPOLOGY_DIR = DATA_DIR / "topologies"
 TELEMETRY_DIR = DATA_DIR / "telemetry"
@@ -18,11 +26,12 @@ for d in [TOPOLOGY_DIR, TELEMETRY_DIR, RESULTS_DIR]:
 # LLM Configuration
 LLM_PROVIDER = os.getenv("LLM_PROVIDER", "gemini")
 LLM_MODEL_MAP = {
-    "gemini": "gemini-3.8-flash",
+    "gemini": os.getenv("GEMINI_MODEL", "gemini-3.5-flash"),
+    "cerebras": os.getenv("CEREBRAS_MODEL", "qwen-3.8-27b"),
     "openai": "gpt-4o-mini",
     "ollama": "qwen2.5:7b-instruct",
 }
-LLM_MODEL = LLM_MODEL_MAP.get(LLM_PROVIDER, "gemini-3.8-flash")
+LLM_MODEL = LLM_MODEL_MAP.get(LLM_PROVIDER, "qwen-3.8-27b" if LLM_PROVIDER == "cerebras" else os.getenv("GEMINI_MODEL", "gemini-3.5-flash"))
 
 # Simulation Parameters
 RANDOM_SEED = 42

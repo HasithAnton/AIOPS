@@ -1,0 +1,81 @@
+{
+  "model_name": "RandomForestClassifier",
+  "parameters": {
+    "n_estimators": 200,
+    "class_weight": "balanced",
+    "random_state": 42,
+    "feature_count": 21
+  },
+  "overall_performance": {
+    "roc_auc": 0.9904006670893669,
+    "pr_auc": 0.9734093429142795,
+    "f1_score": 0.9622926093514329,
+    "precision": 0.9984350547730829,
+    "recall": 0.9286754002911208
+  },
+  "per_fault_recall": {
+    "congestion": {
+      "total_samples": 162,
+      "detected_samples": 0,
+      "recall": 0.0
+    },
+    "mtu_mismatch": {
+      "total_samples": 122,
+      "detected_samples": 0,
+      "recall": 0.0
+    },
+    "interface_flap": {
+      "total_samples": 82,
+      "detected_samples": 0,
+      "recall": 0.0
+    },
+    "routing_loop": {
+      "total_samples": 82,
+      "detected_samples": 0,
+      "recall": 0.0
+    }
+  },
+  "top_features": [
+    {
+      "feature": "packet_loss_rate",
+      "importance": 0.17275861148672428
+    },
+    {
+      "feature": "is_dropping_packets",
+      "importance": 0.16828805645108427
+    },
+    {
+      "feature": "error_rate",
+      "importance": 0.13176309422486038
+    },
+    {
+      "feature": "latency_ms",
+      "importance": 0.10767985251867282
+    },
+    {
+      "feature": "burst_ratio",
+      "importance": 0.08868709725875781
+    },
+    {
+      "feature": "is_link_down",
+      "importance": 0.08279568977826113
+    },
+    {
+      "feature": "is_high_latency",
+      "importance": 0.04436361340752226
+    },
+    {
+      "feature": "rolling_mean_out",
+      "importance": 0.03570621797164922
+    },
+    {
+      "feature": "rolling_mean_in",
+      "importance": 0.032264485648838305
+    },
+    {
+      "feature": "rolling_std_out",
+      "importance": 0.030821136864969866
+    }
+  ],
+  "generated_at": "2026-10-26 13:46:30"
+}

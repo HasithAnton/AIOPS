@@ -18,6 +18,13 @@ Architecture:
 
 import json
 import os
+import sys
+if sys.platform == "win32":
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
 from typing import Annotated, Sequence, TypedDict, Literal
 
 from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage, ToolMessage
@@ -164,7 +171,14 @@ def run_rca_investigation(alert: dict, tools: list, llm, system_prompt: str,
                     print(f"  👁 Result: {obs[:300]}{'...' if len(str(obs)) > 300 else ''}")
 
     final_msg = final_state["messages"][-1]
-    final_report = final_msg.content if hasattr(final_msg, "content") else str(final_msg)
+    raw_content = final_msg.content if hasattr(final_msg, "content") else str(final_msg)
+    if isinstance(raw_content, list):
+        final_report = "\n".join(
+            item.get("text", str(item)) if isinstance(item, dict) else str(item)
+            for item in raw_content
+        )
+    else:
+        final_report = str(raw_content)
 
     if verbose:
         print("\n" + "═" * 60)

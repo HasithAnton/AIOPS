@@ -91,7 +91,7 @@ def inspect_topology(device_id: str = "all") -> str:
         return json.dumps({"error": "Topology not initialized."})
 
     nodes = _state.topology.get("nodes", [])
-    links = _state.topology.get("links", [])
+    links = _state.topology.get("links") or _state.topology.get("edges", [])
 
     if device_id == "all":
         summary = {
@@ -172,7 +172,7 @@ def trace_path(source_device: str, destination_device: str) -> str:
     import networkx as nx
 
     nodes = _state.topology.get("nodes", [])
-    links = _state.topology.get("links", [])
+    links = _state.topology.get("links") or _state.topology.get("edges", [])
 
     G = nx.Graph()
     for n in nodes:
@@ -264,7 +264,7 @@ def check_routes(device_id: str, destination: Optional[str] = None) -> str:
     import networkx as nx
 
     nodes = _state.topology.get("nodes", [])
-    links = _state.topology.get("links", [])
+    links = _state.topology.get("links") or _state.topology.get("edges", [])
 
     G = nx.DiGraph()
     for n in nodes:

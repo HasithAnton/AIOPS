@@ -28,12 +28,13 @@ You have access to diagnostic tools. Your goal is to identify the root cause of 
 - For routing anomalies: use check_routes to verify routing table integrity.
 
 ### FAULT TAXONOMY
-- LINK_FAILURE: ifOperStatus=DOWN, sudden traffic drop to 0, syslog LINEPROTO-5-UPDOWN
-- CONGESTION: high utilization (>85%), increased latency, queue drops
-- MTU_MISMATCH: fragmentation errors, ICMP_UNREACHABLE in logs, high error rates
-- INTERFACE_FLAP: repeated UP/DOWN cycles in syslogs, oscillating ifOperStatus
-- ROUTING_LOOP: TTL_EXPIRED in logs, high CPU, traffic increasing without destination
-- BGP_HIJACK: sudden traffic blackholing, BGP ADJCHANGE logs, massive latency spike
+- LINK_FAILURE: ifOperStatus=DOWN (status 2), traffic dropped to 0, persistent link down, or link cut.
+- CONGESTION: high traffic volume, high latency (>50ms), queue drops/discards (total_discards or ifOutDiscards > 0), packet loss (>10%).
+- MTU_MISMATCH: elevated ifInErrors with modest packet loss (~5%), but latency remains low/normal (<5ms) and ifOperStatus remains UP. (Note: often has no explicit syslogs).
+- INTERFACE_FLAP: repeated UP/DOWN cycles in syslogs (LINK-3-UPDOWN oscillating), or flapping state transitions.
+- ROUTING_LOOP: TTL_EXPIRED / LOOP_DETECTED in syslogs, high latency (>100ms), and high CPU utilization (>90%).
+- BGP_HIJACK: sudden traffic blackholing, BGP ADJCHANGE logs, massive latency spike.
+- FALSE_POSITIVE: alert metrics and tool outputs show healthy traffic, normal latency (<5ms), 0 loss, 0 discards, 0 errors, and no active failure logs.
 
 ### FINAL OUTPUT FORMAT
 Respond with this exact structure when you have sufficient evidence:

@@ -15,7 +15,7 @@ Usage (Ubuntu — live Mininet):
     python3 demo/live_pipeline.py --live --csv emulation/mininet_telemetry_live.csv
 """
 
-import os, sys, json, time, argparse, traceback
+import os, sys, json, time, argparse, traceback, uuid
 from pathlib import Path
 from datetime import datetime
 
@@ -24,6 +24,7 @@ import pandas as pd
 import joblib, torch
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
+import config
 
 from detection.feature_engineering import NetworkFeaturePipeline
 
@@ -35,15 +36,38 @@ STATE_FILE.parent.mkdir(exist_ok=True)
 # ── State helpers ─────────────────────────────────────────────────────────────
 
 def write_state(state: dict):
-    tmp = STATE_FILE.with_suffix(".tmp")
-    with open(tmp, "w") as f:
-        json.dump(state, f, default=str)
-    tmp.replace(STATE_FILE)
+    tmp = STATE_FILE.parent / f"state_{os.getpid()}_{uuid.uuid4().hex[:6]}.tmp"
+    try:
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(state, f, default=str)
+        for _ in range(10):
+            try:
+                tmp.replace(STATE_FILE)
+                return
+            except (PermissionError, OSError):
+                time.sleep(0.02)
+    except Exception:
+        pass
+    finally:
+        if tmp.exists():
+            try:
+                tmp.unlink()
+            except Exception:
+                pass
 
 def load_state() -> dict:
-    if STATE_FILE.exists():
-        with open(STATE_FILE) as f:
-            return json.load(f)
+    if not STATE_FILE.exists():
+        return {}
+    for _ in range(15):
+        try:
+            with open(STATE_FILE, "r", encoding="utf-8") as f:
+                content = f.read()
+                if content.strip():
+                    return json.loads(content)
+        except (PermissionError, OSError, json.JSONDecodeError):
+            time.sleep(0.03)
+        except Exception:
+            break
     return {}
 
 def fresh_state() -> dict:
@@ -256,7 +280,7 @@ def run_agent(alert_row: pd.DataFrame, full_df: pd.DataFrame,
         topo.build_spine_leaf()
 
         try:
-            syslogs_raw = (ROOT / "data/syslog.jsonl").read_text().strip().split("\n")
+            syslogs_raw = (ROOT / "data/syslog.jsonl").read_text(encoding="utf-8", errors="replace").strip().split("\n")
             syslogs = [json.loads(l) for l in syslogs_raw[-50:] if l.strip()]
         except Exception:
             syslogs = []
@@ -301,12 +325,21 @@ def run_agent(alert_row: pd.DataFrame, full_df: pd.DataFrame,
             report_text = "\n".join(str(x) for x in report_text)
         report_text = str(report_text)
 
+        import re
         verdict = "UNKNOWN"
-        for v in ["LINK_FAILURE","CONGESTION","MTU_MISMATCH","INTERFACE_FLAP",
-                  "PACKET_LOSS","FALSE_POSITIVE","ROUTING_LOOP"]:
-            if v in report_text.upper():
-                verdict = v
-                break
+        class_match = re.search(r'(?:Classification|Root Cause)[:\s\*]+([A-Za-z_]+)', report_text, re.IGNORECASE)
+        if class_match:
+            cand = class_match.group(1).upper().strip()
+            for v in ["PACKET_LOSS", "INTERFACE_FLAP", "MTU_MISMATCH", "ROUTING_LOOP", "CONGESTION", "LINK_FAILURE", "BGP_HIJACK", "FALSE_POSITIVE"]:
+                if v in cand:
+                    verdict = v
+                    break
+
+        if verdict == "UNKNOWN":
+            for v in ["PACKET_LOSS", "INTERFACE_FLAP", "MTU_MISMATCH", "ROUTING_LOOP", "CONGESTION", "LINK_FAILURE", "FALSE_POSITIVE"]:
+                if v in report_text.upper():
+                    verdict = v
+                    break
 
         state["agent_steps"] = steps_log
         state["rca_report"]  = {"verdict": verdict, "summary": report_text}
@@ -358,8 +391,18 @@ def run_replay(rf, lstm, speed: float = 10.0):
 
     while True:
         # ── Check for injected fault ───────────────────────────────────────────
-        current_state = load_state()
-        injected = current_state.get("injected_fault")
+        trigger_file = ROOT / "demo" / "fault_trigger.txt"
+        injected = None
+        if trigger_file.exists():
+            try:
+                injected = trigger_file.read_text(encoding="utf-8").strip()
+                trigger_file.unlink(missing_ok=True)
+            except Exception:
+                injected = None
+
+        if not injected:
+            current_state = load_state()
+            injected = current_state.get("injected_fault")
 
         if injected and injected != "recover":
             fault_type = injected
@@ -376,6 +419,20 @@ def run_replay(rf, lstm, speed: float = 10.0):
             # Load fault scenario rows (up to 300 rows)
             if fault_type in fault_pools:
                 fault_rows = fault_pools[fault_type].head(300).copy()
+            elif fault_type == "packet_loss":
+                # Synthesize genuine packet loss telemetry on an active link (Spine2-Leaf2)
+                base = normal_df[
+                    (normal_df["device_id"] == "Spine2") & (normal_df["interface_id"] == "Ethernet1/2")
+                ].head(300).copy()
+                if len(base) < 50:
+                    base = normal_df.head(300).copy()
+                fault_rows = base.copy()
+                fault_rows["is_anomaly"] = 1
+                fault_rows["anomaly_type"] = "packet_loss"
+                fault_rows["ifOperStatus"] = 1  # Link is UP (NOT a link failure!)
+                fault_rows["packet_loss_rate"] = 0.35  # 35% packet loss
+                fault_rows["latency_ms"] = fault_rows["latency_ms"].apply(lambda x: max(float(x), 45.0) + 15.0)
+                fault_rows["ifOutDiscards"] = fault_rows["ifOutDiscards"] + 150
             else:
                 fault_rows = df[df["is_anomaly"] == 1].head(300).copy()
 
@@ -575,8 +632,14 @@ if __name__ == "__main__":
                         help="Replay speed multiplier (default 15×)")
     args = parser.parse_args()
 
-    if not os.environ.get("GOOGLE_API_KEY"):
-        raise EnvironmentError("Set GOOGLE_API_KEY before running: export GOOGLE_API_KEY=your_key")
+    has_llm = (
+        os.environ.get("CEREBRAS_API_KEY")
+        or os.environ.get("GOOGLE_API_KEY")
+        or os.environ.get("GEMINI_API_KEY")
+        or os.environ.get("OPENAI_API_KEY")
+    )
+    if not has_llm:
+        print("[pipeline] Warning: No LLM API key found. Tier 3 agent will use template RCA reports.")
 
     # Wipe stale state immediately — dashboard shows "loading" while models load
     boot_state = fresh_state()

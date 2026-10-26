@@ -161,6 +161,17 @@ class NetworkTopology:
         add_wan_edge("A3", "D2", 1000.0, 5.0, "GigE0/1", "GigE0/1")
         add_wan_edge("A4", "D3", 1000.0, 5.0, "GigE0/1", "GigE0/1")
 
+    def build_combined(self) -> None:
+        """
+        Build a combined topology containing both Spine-Leaf and WAN devices.
+        Ensures all devices in the unified telemetry dataset are present.
+        """
+        self.build_spine_leaf()
+        sl_graph = self.graph.copy()
+        self.build_hierarchical_wan()
+        self.graph = nx.compose(sl_graph, self.graph)
+        self.invalidate_routing_cache()
+
     def _active_edges_view(self) -> nx.Graph:
         """Return a view of the graph with only UP nodes and edges."""
         def edge_filter(u: str, v: str) -> bool:
@@ -360,7 +371,10 @@ class NetworkTopology:
         Returns:
             Dictionary representation of the graph.
         """
-        return nx.node_link_data(self.graph)
+        data = nx.node_link_data(self.graph)
+        if "edges" in data and "links" not in data:
+            data["links"] = data["edges"]
+        return data
 
     def from_dict(self, data: Dict[str, Any]) -> None:
         """
