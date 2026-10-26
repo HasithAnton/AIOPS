@@ -37,7 +37,7 @@ data/models/
 # ↑ emulation/mininet_models/*.pkl and *.pth are intentionally NOT excluded — needed for demo
 
 # ── Results / scratch ─────────────────────────────────
-results/
+# results/ (tracked for benchmark documentation reports)
 scratch/
 
 # ── Logs ──────────────────────────────────────────────

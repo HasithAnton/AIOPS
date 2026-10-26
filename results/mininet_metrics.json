@@ -1,0 +1,148 @@
+{
+  "dataset": {
+    "file": "mininet_telemetry_augmented.csv",
+    "total_records": 73240,
+    "train_samples": 43943,
+    "val_samples": 14647,
+    "test_samples": 14650,
+    "timestamp": "2026-10-26 19:31:17.565189"
+  },
+  "tier1_random_forest": {
+    "roc_auc": 0.9965237836787207,
+    "pr_auc": 0.9927101613958279,
+    "f1_score": 0.9728457071103438,
+    "precision": 0.9977462974887314,
+    "recall": 0.9491577335375191,
+    "accuracy": 0.9881911262798635,
+    "threshold": 0.6400000000000001,
+    "confusion_matrix": {
+      "true_positive": 3099,
+      "false_positive": 7,
+      "true_negative": 11378,
+      "false_negative": 166
+    },
+    "per_fault": {
+      "congestion": {
+        "samples": 644,
+        "detected": 642,
+        "recall": 0.9968944099378882,
+        "precision": 1.0
+      },
+      "interface_flap": {
+        "samples": 661,
+        "detected": 498,
+        "recall": 0.7534039334341907,
+        "precision": 1.0
+      },
+      "link_failure": {
+        "samples": 680,
+        "detected": 680,
+        "recall": 1.0,
+        "precision": 1.0
+      },
+      "mtu_mismatch": {
+        "samples": 632,
+        "detected": 631,
+        "recall": 0.9984177215189873,
+        "precision": 1.0
+      },
+      "packet_loss": {
+        "samples": 648,
+        "detected": 648,
+        "recall": 1.0,
+        "precision": 1.0
+      }
+    },
+    "n_test_samples": 14650
+  },
+  "tier2_lstm_autoencoder": {
+    "roc_auc": 0.9811713647561574,
+    "pr_auc": 0.9284232341425566,
+    "f1_score": 0.7922011287839917,
+    "precision": 0.8969790859798605,
+    "recall": 0.7093415007656968,
+    "accuracy": 0.9170648464163823,
+    "threshold": 2.7072293281555204,
+    "confusion_matrix": {
+      "true_positive": 2316,
+      "false_positive": 266,
+      "true_negative": 11119,
+      "false_negative": 949
+    },
+    "per_fault": {
+      "congestion": {
+        "samples": 644,
+        "detected": 644,
+        "recall": 1.0,
+        "precision": 1.0,
+        "mean_mse": 2232.78173828125,
+        "max_mse": 3159.772216796875
+      },
+      "interface_flap": {
+        "samples": 661,
+        "detected": 650,
+        "recall": 0.983358547655068,
+        "precision": 1.0,
+        "mean_mse": 4424.3466796875,
+        "max_mse": 11426.5888671875
+      },
+      "link_failure": {
+        "samples": 680,
+        "detected": 680,
+        "recall": 1.0,
+        "precision": 1.0,
+        "mean_mse": 354509.0625,
+        "max_mse": 375197.0625
+      },
+      "mtu_mismatch": {
+        "samples": 632,
+        "detected": 332,
+        "recall": 0.5253164556962026,
+        "precision": 1.0,
+        "mean_mse": 3.3662571907043457,
+        "max_mse": 10.19845199584961
+      },
+      "packet_loss": {
+        "samples": 648,
+        "detected": 10,
+        "recall": 0.015432098765432098,
+        "precision": 1.0,
+        "mean_mse": 0.7697163224220276,
+        "max_mse": 8.876566886901855
+      }
+    },
+    "mse_distribution": {
+      "normal": {
+        "mean": 563.493896484375,
+        "median": 0.13864251971244812,
+        "p95": 0.7699474692344666,
+        "p99": 18.55202293395996,
+        "max": 337656.9375
+      },
+      "anomalous": {
+        "mean": 75170.3515625,
+        "median": 2177.923095703125,
+        "p95": 375189.5625,
+        "p99": 375191.8125,
+        "max": 375197.0625
+      }
+    },
+    "n_test_samples": 14650
+  },
+  "base_models_pre_adaptation": {
+    "base_rf": {
+      "roc_auc": 0.9063408571365159,
+      "pr_auc": 0.8861166500786412,
+      "f1_score": 0.37942084025634937,
+      "recall": 0.9791730474732007,
+      "precision": 0.23529844704496947
+    },
+    "base_lstm": {
+      "roc_auc": 0.9211734631083455,
+      "pr_auc": 0.8295222550273396,
+      "f1_score": 0.3644990231649456,
+      "recall": 1.0,
+      "precision": 0.22286689419795222
+    }
+  }
+}
