@@ -19,6 +19,11 @@ import os, sys, json, time, argparse, traceback, uuid
 from pathlib import Path
 from datetime import datetime
 
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
 import numpy as np
 import pandas as pd
 import joblib, torch
@@ -124,36 +129,7 @@ def load_models():
                     df_out[col] = 0.0
             return df_out
 
-        def _add_mininet_features(df, window=12):
-            """Stateless Mininet-extra feature injection (mirrors finetune_on_mininet.py)."""
-            import pandas as _pd
-            df = df.copy()
-            if 'device_id' not in df.columns:
-                df['device_id'] = 'unknown'
-            if 'interface_id' not in df.columns:
-                df['interface_id'] = 'unknown'
-            grp = df.groupby(['device_id', 'interface_id'])
-            w   = window
-            df['mn_link_down']   = (df.get('ifOperStatus', 1) == 2).astype(float)
-            if 'ifOperStatus' in df.columns:
-                df['mn_oper_flap'] = grp['ifOperStatus'].transform(
-                    lambda x: x.rolling(w, min_periods=1).std()).fillna(0)
-            else:
-                df['mn_oper_flap'] = 0.0
-            delta_in = 'delta_in_octets' if 'delta_in_octets' in df.columns else 'delta_ifInOctets'
-            if delta_in in df.columns:
-                df['mn_zero_traffic'] = (df[delta_in] == 0).astype(float)
-                roll_mean = grp[delta_in].transform(
-                    lambda x: x.rolling(w, min_periods=1).mean()) + 1.0
-                df['mn_burst_ratio'] = df[delta_in] / roll_mean
-            else:
-                df['mn_zero_traffic'] = 0.0
-                df['mn_burst_ratio']  = 0.0
-            if 'ifInDiscards' in df.columns and 'ifInOctets' in df.columns:
-                df['mn_discard_rate'] = df['ifInDiscards'] / (df['ifInOctets'] + 1)
-            else:
-                df['mn_discard_rate'] = 0.0
-            return df
+        from emulation.finetune_on_mininet import add_corrected_features as _add_mininet_features
 
         def _predict(df_in):
             df_z  = _zero_flat(df_in)
@@ -364,8 +340,13 @@ def run_replay(rf, lstm, speed: float = 10.0):
         pull real rows of that fault type from the parquet, run through RF→LSTM→Agent
       - RECOVER: reset detection state, go back to idle
     """
-    print("[pipeline] Loading parquet...")
-    df = pd.read_parquet(ROOT / "data/snmp_telemetry.parquet")
+    mininet_csv = ROOT / "emulation" / "mininet_telemetry_augmented.csv"
+    if mininet_csv.exists():
+        print(f"[pipeline] Loading Mininet augmented dataset: {mininet_csv.name}...")
+        df = pd.read_csv(mininet_csv)
+    else:
+        print("[pipeline] Loading parquet...")
+        df = pd.read_parquet(ROOT / "data/snmp_telemetry.parquet")
     if "timestamp" in df.columns:
         df = df.sort_values("timestamp").reset_index(drop=True)
 

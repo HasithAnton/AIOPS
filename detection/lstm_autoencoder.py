@@ -358,6 +358,13 @@ class LSTMAutoencoderDetector:
         X_robust, _ = self.pipeline.transform(test_df)
         X_scaled    = self.dl_scaler.transform(X_robust)
         X_scaled    = np.clip(X_scaled, -2.0, 5.0)
+
+        if getattr(self, '_use_extra_feats', False) and getattr(self, '_extra_scaler', None) is not None:
+            from emulation.finetune_on_mininet import add_corrected_features, MN_EXTRA_FEATURES
+            df_mn = add_corrected_features(test_df)
+            Xe    = self._extra_scaler.transform(df_mn[MN_EXTRA_FEATURES].fillna(0).values)
+            X_scaled = np.hstack([X_scaled, Xe])
+
         X_seq       = self._create_sequences(X_scaled, test_df)
 
         raw_mse = self._batched_predict_mse(X_seq)
